@@ -1,0 +1,25 @@
+# Environment & secrets (CRITICAL)
+.env
+.env.local
+*.env
+
+# Python virtual environment & cache
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Temporary & intermediate files
+_temp_gmail/
+_backup/
+_web_uploads/
+*.log
+
+# Sensitive PDF invoice attachments (keep repository clean and private)
+*.pdf
+

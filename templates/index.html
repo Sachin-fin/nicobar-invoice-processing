@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nicobar Design - Expense Invoice Processing System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Header -->
+    <header class="top-nav">
+      <div class="brand">
+        <div class="logo-badge">ND</div>
+        <div>
+          <h1>Nicobar Design <span>· Invoice Automation</span></h1>
+          <p class="subtitle">Expense & Purchase Invoice Register Engine</p>
+        </div>
+      </div>
+      <div class="nav-controls">
+        <span class="live-pill" id="live-indicator"><span class="dot"></span> Live Sync Active</span>
+        <button class="btn btn-outline" onclick="openFile('expenses')">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+          Expenses Folder
+        </button>
+        <button class="btn btn-primary" onclick="openFile('register')">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Open Excel Register
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-content">
+      <!-- KPI Stats Section -->
+      <section class="kpi-grid">
+        <div class="kpi-card accent-blue">
+          <div class="kpi-label">Recorded Invoices</div>
+          <div class="kpi-value" id="kpi-invoices">-</div>
+          <div class="kpi-sub" id="kpi-lines">- line items recorded</div>
+        </div>
+
+        <div class="kpi-card accent-indigo">
+          <div class="kpi-label">Total Invoiced (Gross)</div>
+          <div class="kpi-value" id="kpi-total">₹0</div>
+          <div class="kpi-sub">Total across all suppliers</div>
+        </div>
+
+        <div class="kpi-card accent-emerald">
+          <div class="kpi-label">Taxable Value</div>
+          <div class="kpi-value" id="kpi-taxable">₹0</div>
+          <div class="kpi-sub" id="kpi-suppliers">- active suppliers</div>
+        </div>
+
+        <div class="kpi-card accent-purple">
+          <div class="kpi-label">Total GST (Input Tax)</div>
+          <div class="kpi-value" id="kpi-gst">₹0</div>
+          <div class="kpi-sub" id="kpi-gst-breakdown">IGST + CGST + SGST</div>
+        </div>
+
+        <div class="kpi-card accent-amber">
+          <div class="kpi-label">TDS Deducted</div>
+          <div class="kpi-value" id="kpi-tds">₹0</div>
+          <div class="kpi-sub">Sec 194Q / 194C / 194J</div>
+        </div>
+
+        <div class="kpi-card accent-rose">
+          <div class="kpi-label">Net Payable</div>
+          <div class="kpi-value" id="kpi-net">₹0</div>
+          <div class="kpi-sub">After tax deductions</div>
+        </div>
+      </section>
+
+      <!-- Action Panel & Processing -->
+      <section class="action-panel">
+        <div class="action-left">
+          <button class="btn btn-primary" id="gmail-sync-btn" onclick="triggerGmailSync()">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            Sync invoice@nicobar.com
+          </button>
+          <button class="btn btn-accent" id="scan-btn" onclick="triggerFolderScan()">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Scan Folder
+          </button>
+          <button class="btn btn-secondary" onclick="openGmailModal()">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            Gmail Settings
+          </button>
+          <button class="btn btn-secondary" onclick="openFile('dashboard')">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/></svg>
+            Dashboard
+          </button>
+          <button class="btn btn-secondary" onclick="openFile('vendor_codes')">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
+            GL Codes
+          </button>
+        </div>
+
+        <div class="search-box">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input type="text" id="search-input" placeholder="Search by Invoice No, Supplier, Date, or Description..." oninput="handleSearch(this.value)">
+        </div>
+      </section>
+
+      <!-- Drag & Drop Upload Zone -->
+      <section class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <input type="file" id="file-input" accept=".pdf" style="display:none" onchange="handleFileUpload(event)">
+        <div class="upload-icon">
+          <svg width="36" height="36" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+        </div>
+        <div class="upload-text">
+          <h3>Drop an Invoice PDF here, or <span>Browse Files</span></h3>
+          <p>Extracts fields, checks for duplicates, applies GST & TDS logic, and stages for Excel entry</p>
+        </div>
+      </section>
+
+      <!-- Processing Status Notification Banner -->
+      <div id="status-banner" class="status-banner" style="display:none;"></div>
+
+      <!-- Data Table Section -->
+      <section class="table-container">
+        <div class="table-header">
+          <h2>Recorded Purchase Invoices</h2>
+          <div class="table-meta" id="table-meta">Loading invoices...</div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>S.No</th>
+                <th>Date</th>
+                <th>Invoice No</th>
+                <th>Supplier</th>
+                <th>Description</th>
+                <th class="text-right">Taxable (₹)</th>
+                <th>Tax Type</th>
+                <th class="text-right">Total (₹)</th>
+                <th class="text-right">TDS (₹)</th>
+                <th class="text-right">Net Payable (₹)</th>
+              </tr>
+            </thead>
+            <tbody id="invoice-tbody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- Modal for Preview & Review -->
+    <div class="modal-overlay" id="review-modal" style="display:none;">
+      <div class="modal-box">
+        <div class="modal-header">
+          <div>
+            <h3 id="modal-title">Extracted Invoice Review</h3>
+            <p id="modal-subtitle" class="subtitle"></p>
+          </div>
+          <button class="close-btn" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="modal-body">
+          <!-- Populated dynamically -->
+        </div>
+        <div class="modal-footer" id="modal-footer">
+          <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-accent" id="modal-commit-btn" onclick="commitModalInvoice()">Commit to Excel Register</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal for Gmail Settings -->
+    <div class="modal-overlay" id="gmail-modal" style="display:none;">
+      <div class="modal-box" style="max-width: 580px;">
+        <div class="modal-header">
+          <div>
+            <h3>Link invoice@nicobar.com</h3>
+            <p class="subtitle">Google Mail IMAP & Automated Intake Setup</p>
+          </div>
+          <button class="close-btn" onclick="closeGmailModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="margin-bottom: 16px;">
+            <label style="display:block;font-size:0.8rem;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;font-weight:600;">Mailbox Address</label>
+            <input type="text" id="gmail-mailbox-input" value="invoice@nicobar.com" style="width:100%;padding:10px 14px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;color:#fff;font-family:inherit;">
+          </div>
+          <div style="margin-bottom: 20px;">
+            <label style="display:block;font-size:0.8rem;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;font-weight:600;">Google App Password (16 characters)</label>
+            <input type="password" id="gmail-password-input" placeholder="e.g. abcd efgh ijkl mnop" style="width:100%;padding:10px 14px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;color:#fff;font-family:monospace;letter-spacing:1px;">
+            <div style="font-size:0.75rem;color:var(--text-dim);margin-top:8px;line-height:1.4;">
+              💡 <strong>How to get this password:</strong><br>
+              1. Open Google Account (<a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--accent-blue);">myaccount.google.com/apppasswords</a>) for <code>invoice@nicobar.com</code>.<br>
+              2. Create an App Password with name <code>Nicobar Invoice Automation</code>.<br>
+              3. Paste the 16-letter code here. It is saved locally to <code>.env</code> on your PC.
+            </div>
+          </div>
+          <div id="gmail-last-sync-info" style="font-size:0.8rem;color:var(--text-muted);background:rgba(255,255,255,0.03);padding:10px 14px;border-radius:8px;border:1px solid var(--border-color);">
+            Last scan time: Loading...
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeGmailModal()">Close</button>
+          <button class="btn btn-primary" onclick="saveGmailSettings()">Save & Test Connection</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

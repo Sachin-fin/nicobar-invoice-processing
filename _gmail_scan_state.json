@@ -1,0 +1,45 @@
+{
+  "mailbox": "invoice@nicobar.com",
+  "last_scan_epoch": 1791101142,
+  "last_scan_utc": "2026-10-04T08:29:20Z",
+  "last_scan_ist": "2026-10-04 13:59:20 IST",
+  "newest_message_seen_utc": "2026-10-01T09:06:21Z",
+  "note": "Next Gmail scan searches only mail received after last_scan_epoch (Gmail query after:<epoch>). Updated by the scheduled task at the end of each successful Gmail scan.",
+  "pending_messages": [
+    {
+      "id": "1a0d201f04a25ddb",
+      "subject": "invoices",
+      "sender": "rohitpundir@nicobar.com",
+      "date_utc": "2026-09-24T06:01:50Z",
+      "size_bytes": 12665271,
+      "reason": "RAW download failed again 01-10-2026 (session expired \u2013 too large, 12 PDFs inside)"
+    },
+    {
+      "id": "1a0d7910bc5c3986",
+      "subject": "Invoices copy",
+      "sender": "sanjaysharma@nicobar.com",
+      "date_utc": "2026-09-25T07:54:50Z",
+      "size_bytes": 14456295,
+      "reason": "RAW download failed again 01-10-2026 (session expired \u2013 too large)"
+    },
+    {
+      "id": "1a0d30cfb9b6e9da",
+      "subject": "scanned invoices",
+      "sender": "prachisyal@nicobar.com",
+      "date_utc": "2026-09-24T10:53:30Z",
+      "size_bytes": 28563367,
+      "reason": "Not downloaded \u2013 too large (skipped 01-10-2026)"
+    },
+    {
+      "id": "1a0d348710f4c2a0",
+      "subject": "Re: scanned invoices",
+      "sender": "prachisyal@nicobar.com",
+      "date_utc": "2026-09-24T11:58:23Z",
+      "size_bytes": 19550853,
+      "reason": "Not downloaded \u2013 too large (skipped 01-10-2026)"
+    }
+  ],
+  "ignored_files": [
+    "Cowork_Invoice_to_Dynamics365_Process.pdf"
+  ]
+}
