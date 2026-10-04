@@ -159,19 +159,18 @@ class GmailIntake:
                     filename = self.decode_str(filename)
                     fn_lower = filename.lower()
 
-                    # Skip email inline signatures, tracking icons, and statements
-                    if fn_lower.endswith(('.dat', '.bin')):
+                    # Skip email inline signatures, tracking icons, screenshots, and statements
+                    if fn_lower.endswith(('.dat', '.bin', '.txt', '.zip')):
                         continue
                     if 'image00' in fn_lower or fn_lower.startswith('~wrd') or fn_lower == 'gl_26-27.pdf':
                         continue
+                    if 'whatsapp' in fn_lower or 'screenshot' in fn_lower or 'pasted image' in fn_lower:
+                        continue
 
-                    if fn_lower.endswith(('.pdf', '.png', '.jpg', '.jpeg')):
+                    # Only process PDF invoice documents
+                    if fn_lower.endswith('.pdf'):
                         payload = part.get_payload(decode=True)
                         if not payload:
-                            continue
-
-                        # Skip tiny images (email icons / logos)
-                        if fn_lower.endswith(('.png', '.jpg', '.jpeg')) and len(payload) < 80 * 1024:
                             continue
 
                         # Check file size (e.g. > 15MB)

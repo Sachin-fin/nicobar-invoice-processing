@@ -244,11 +244,11 @@ class ExcelManager:
                 print(f"Skipping duplicate: {reason}")
                 continue
 
-            curr_sno += 1
             sup_name = inv.get("supplier", "Unknown")
             new_suppliers.add(sup_name)
 
             for itm in inv.get("items", []):
+                curr_sno += 1
                 lines_to_insert.append({
                     "sno": curr_sno,
                     "file_path": inv.get("file_path", ""),
@@ -290,14 +290,35 @@ class ExcelManager:
                     "tds_rate": itm.get("tds_rate", 0.001),
                 })
 
+            # Update state in memory to prevent duplicate entries within same batch
+            inv_no = inv.get("invoice_no")
+            if inv_no:
+                state.setdefault("registered_invoices", []).append({
+                    "sno": curr_sno,
+                    "inv_no_norm": normalize_str(inv_no),
+                    "sup_norm": normalize_str(sup_name),
+                    "gstin_norm": normalize_str(inv.get("supplier_gstin")),
+                    "inv_no": str(inv_no),
+                    "supplier": str(sup_name),
+                })
+            fn = inv.get("file_path")
+            if fn:
+                state.setdefault("registered_files", []).append(str(fn).strip().lower().replace('/', '\\'))
+            irn = inv.get("irn")
+            if irn:
+                state.setdefault("registered_irns", []).append(str(irn).strip().lower())
+
         if not lines_to_insert:
             return {"status": "skipped", "message": "All invoices were duplicates or empty", "added_count": 0}
 
-        # Modify sheet2.xml
+        # Modify sheet2.xml and workbook.xml
         self._patch_sheet2_xml(lines_to_insert)
 
         # Update 3.Vendor_GL_Codes.xlsx with any new suppliers
         self._update_vendor_codes(new_suppliers)
+
+        # Invalidate state cache
+        self._cached_state = None
 
         # Rebuild dashboard HTML
         self._refresh_dashboard()
@@ -310,75 +331,130 @@ class ExcelManager:
         }
 
     def _patch_sheet2_xml(self, lines_to_insert):
-        """Directly insert rows into xl/worksheets/sheet2.xml preserving drawings/charts."""
+        """Directly insert rows into xl/worksheets/sheet2.xml and xl/workbook.xml preserving drawings/charts."""
         temp_zip = EXPENSES_DIR / "temp_patch_reg.xlsx"
-        num_new = len(lines_to_insert)
 
-        with zipfile.ZipFile(self.register_path, 'r') as zin, zipfile.ZipFile(temp_zip, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                if item.filename == 'xl/worksheets/sheet2.xml':
-                    raw_xml = zin.read(item.filename)
-                    modified_xml = self._insert_rows_into_sheet_xml(raw_xml, lines_to_insert)
-                    zout.writestr(item, modified_xml)
-                else:
-                    zout.writestr(item, zin.read(item.filename))
+        with zipfile.ZipFile(self.register_path, 'r') as zin:
+            raw_sheet2 = zin.read('xl/worksheets/sheet2.xml')
+            modified_sheet2, new_max_data_row = self._insert_rows_into_sheet_xml(raw_sheet2, lines_to_insert)
+
+            with zipfile.ZipFile(temp_zip, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    if item.filename == 'xl/worksheets/sheet2.xml':
+                        zout.writestr(item, modified_sheet2)
+                    elif item.filename == 'xl/workbook.xml':
+                        raw_wb = zin.read(item.filename)
+                        modified_wb = self._update_workbook_xml(raw_wb, new_max_data_row)
+                        zout.writestr(item, modified_wb)
+                    else:
+                        zout.writestr(item, zin.read(item.filename))
 
         # Replace register with temp
         shutil.move(temp_zip, self.register_path)
+
+    def _update_workbook_xml(self, raw_xml, new_last_row):
+        """Update definedName _xlnm._FilterDatabase in xl/workbook.xml to new last data row."""
+        try:
+            root = ET.fromstring(raw_xml)
+            ns = {'ns': NS_MAIN}
+            for dn in root.findall('.//ns:definedName', ns):
+                if dn.attrib.get('name') == '_xlnm._FilterDatabase':
+                    if dn.text:
+                        dn.text = re.sub(r'(\$AT\$)\d+', rf'\g<1>{new_last_row}', dn.text)
+            return ET.tostring(root, encoding='utf-8', xml_declaration=True)
+        except Exception as e:
+            print(f"Warning updating workbook.xml: {e}")
+            return raw_xml
 
     def _insert_rows_into_sheet_xml(self, raw_xml, lines_to_insert):
         root = ET.fromstring(raw_xml)
         ns = {'ns': NS_MAIN}
         sheet_data = root.find('ns:sheetData', ns)
 
-        # Locate template row (e.g. 121), the blank row (122), and total row (123)
         rows_by_num = {}
         for r in sheet_data.findall('ns:row', ns):
             r_num = int(r.attrib.get('r', 0))
             rows_by_num[r_num] = r
 
-        max_existing_data_row = 121
+        # 1. Locate TOTAL row dynamically
+        total_row_num = None
         for r_num in sorted(rows_by_num.keys()):
-            if r_num < 122:
-                max_existing_data_row = r_num
-
-        total_row_num = 123
-        for r_num in sorted(rows_by_num.keys()):
-            if r_num > max_existing_data_row:
-                # Find row containing TOTAL
-                r_elem = rows_by_num[r_num]
-                for c in r_elem.findall('ns:c', ns):
-                    f = c.find('ns:f', ns)
-                    if f is not None and 'SUM' in (f.text or ''):
-                        total_row_num = r_num
-                        break
-                if total_row_num == r_num:
+            if r_num < 5:
+                continue
+            r_elem = rows_by_num[r_num]
+            for c in r_elem.findall('ns:c', ns):
+                f = c.find('ns:f', ns)
+                if f is not None and 'SUM(' in (f.text or '').upper():
+                    total_row_num = r_num
                     break
+                is_elem = c.find('ns:is/ns:t', ns)
+                if is_elem is not None and 'TOTAL' in (is_elem.text or '').upper():
+                    total_row_num = r_num
+                    break
+                v_elem = c.find('ns:v', ns)
+                if v_elem is not None and 'TOTAL' in (v_elem.text or '').upper():
+                    total_row_num = r_num
+                    break
+            if total_row_num is not None:
+                break
+
+        if total_row_num is None:
+            total_row_num = 123
 
         blank_row_num = total_row_num - 1
-        num_new = len(lines_to_insert)
 
-        # Shift all rows >= blank_row_num by num_new
+        # 2. Locate max_existing_data_row (last row with cells before blank_row_num)
+        max_existing_data_row = 4
+        for r_num in sorted(rows_by_num.keys()):
+            if 5 <= r_num < blank_row_num:
+                if len(rows_by_num[r_num].findall('ns:c', ns)) > 0:
+                    max_existing_data_row = r_num
+
+        num_new = len(lines_to_insert)
+        new_max_data_row = max_existing_data_row + num_new
+        new_blank_row_num = blank_row_num + num_new
+        new_total_row_num = total_row_num + num_new
+
+        # Compute sums of new rows for the TOTAL row evaluated values
+        col_adds = {
+            'Q': sum(round(float(l.get('quantity', 1)) * float(l.get('rate', 0)) - float(l.get('discount', 0)), 2) for l in lines_to_insert),
+            'T': sum(round(round(float(l.get('quantity', 1)) * float(l.get('rate', 0)) - float(l.get('discount', 0)), 2) * float(l.get('gst_rate', 0)), 2) if 'IGST' in str(l.get('tax_type', '')).upper() else 0.0 for l in lines_to_insert),
+            'U': sum(round(round(float(l.get('quantity', 1)) * float(l.get('rate', 0)) - float(l.get('discount', 0)), 2) * float(l.get('gst_rate', 0)) / 2.0, 2) if any(k in str(l.get('tax_type', '')).upper() for k in ('CGST', 'SGST')) else 0.0 for l in lines_to_insert),
+            'W': sum(float(l.get('round_off', 0) or 0) for l in lines_to_insert),
+        }
+        col_adds['V'] = col_adds['U']
+        col_adds['X'] = round(col_adds['Q'] + col_adds['T'] + col_adds['U'] + col_adds['V'] + col_adds['W'], 2)
+        col_adds['Y'] = sum(round(round(float(l.get('quantity', 1)) * float(l.get('rate', 0)) - float(l.get('discount', 0)), 2) * float(l.get('tds_rate', 0) or 0), 0) for l in lines_to_insert)
+        col_adds['Z'] = round(col_adds['X'] - col_adds['Y'], 2)
+
+        # 3. Shift all rows >= blank_row_num down by num_new
         for r_num in sorted(rows_by_num.keys(), reverse=True):
             if r_num >= blank_row_num:
                 row_elem = rows_by_num[r_num]
-                new_r_num = r_num + num_new
-                row_elem.attrib['r'] = str(new_r_num)
-                # Update cell coordinates
+                shifted_r_num = r_num + num_new
+                row_elem.attrib['r'] = str(shifted_r_num)
                 for c in row_elem.findall('ns:c', ns):
                     coord = c.attrib.get('r', '')
-                    col_letters = re.match(r'([A-Za-z]+)', coord).group(1)
-                    c.attrib['r'] = f"{col_letters}{new_r_num}"
-                    # If this is the TOTAL row, update SUM formulas
-                    f = c.find('ns:f', ns)
-                    if f is not None and f.text and 'SUM(' in f.text:
-                        # e.g. SUM(Q5:Q122) -> SUM(Q5:Q{max_existing_data_row + num_new})
-                        m = re.match(r'SUM\(([A-Za-z]+)\d+:([A-Za-z]+)\d+\)', f.text)
-                        if m:
-                            c1, c2 = m.group(1), m.group(2)
-                            f.text = f"SUM({c1}5:{c2}{max_existing_data_row + num_new})"
+                    m = re.match(r'([A-Za-z]+)', coord)
+                    if m:
+                        col_ltr = m.group(1)
+                        c.attrib['r'] = f"{col_ltr}{shifted_r_num}"
+                        # If this is the TOTAL row, update SUM formulas and <v> values
+                        f = c.find('ns:f', ns)
+                        if f is not None and f.text and 'SUM(' in f.text:
+                            m_sum = re.match(r'SUM\(([A-Za-z]+)\d+:([A-Za-z]+)\d+\)', f.text)
+                            if m_sum:
+                                c1, c2 = m_sum.group(1), m_sum.group(2)
+                                f.text = f"SUM({c1}5:{c2}{new_blank_row_num})"
+                            v_elem = c.find('ns:v', ns)
+                            if v_elem is not None and col_ltr in col_adds:
+                                try:
+                                    old_v = float(v_elem.text or 0)
+                                    v_elem.text = str(round(old_v + col_adds[col_ltr], 5))
+                                except ValueError:
+                                    pass
 
-        # Generate new rows starting from blank_row_num (which was 122)
+        # 4. Generate new rows starting from max_existing_data_row + 1
         template_row = rows_by_num.get(max_existing_data_row)
         styles = self._extract_styles_from_row(template_row)
 
@@ -388,7 +464,7 @@ class ExcelManager:
             r_elem = self._create_row_element(target_row_idx, line, styles)
             new_rows_elements.append(r_elem)
 
-        # Insert new rows into sheetData in proper order
+        # 5. Insert new rows into sheetData in sorted order
         all_rows = []
         for r in sheet_data.findall('ns:row', ns):
             all_rows.append(r)
@@ -399,12 +475,13 @@ class ExcelManager:
         for r in all_rows:
             sheet_data.append(r)
 
-        # Update autoFilter ref if present
+        # 6. Update autoFilter ref
         auto_filter = root.find('ns:autoFilter', ns)
         if auto_filter is not None:
-            auto_filter.attrib['ref'] = f"A4:AT{max_existing_data_row + num_new}"
+            auto_filter.attrib['ref'] = f"A4:AT{new_max_data_row}"
 
-        return ET.tostring(root, encoding='utf-8', xml_declaration=True)
+        xml_bytes = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+        return xml_bytes, new_max_data_row
 
     def _extract_styles_from_row(self, row_elem):
         styles = {}
@@ -430,64 +507,86 @@ class ExcelManager:
             'collapsed': 'false',
         })
 
-        # Date to excel serial number
+        # Calculate evaluated values for formula cells
+        qty = float(line.get("quantity") or 1.0)
+        rate = float(line.get("rate") or 0.0)
+        disc = float(line.get("discount") or 0.0)
+        taxable_amt = round(qty * rate - disc, 2)
+        gst_r = float(line.get("gst_rate") or 0.0)
+        tax_t = str(line.get("tax_type") or "IGST").upper()
+        round_off = float(line.get("round_off") or 0.0)
+
+        igst_amt = round(taxable_amt * gst_r, 2) if "IGST" in tax_t else 0.0
+        cgst_amt = round(taxable_amt * gst_r / 2.0, 2) if ("CGST" in tax_t or "SGST" in tax_t) else 0.0
+        sgst_amt = cgst_amt
+        inv_tot = round(taxable_amt + igst_amt + cgst_amt + sgst_amt + round_off, 2)
+        tds_r = float(line.get("tds_rate") or 0.0)
+        tds_amt = round(taxable_amt * tds_r, 0)
+        net_pay = round(inv_tot - tds_amt, 2)
+
+        # Date to excel serial number and year/month evaluated values
         inv_dt = line.get("invoice_date")
-        if isinstance(inv_dt, datetime.date):
+        if isinstance(inv_dt, (datetime.date, datetime.datetime)):
+            year_val = inv_dt.year
+            month_val = inv_dt.strftime("%b")
             epoch = datetime.date(1899, 12, 30)
-            date_serial = (inv_dt - epoch).days
+            target_d = inv_dt.date() if isinstance(inv_dt, datetime.datetime) else inv_dt
+            date_serial = (target_d - epoch).days
         else:
+            year_val = 2026
+            month_val = "Oct"
             date_serial = 46295
 
         col_defs = [
-            ("A", line.get("sno"), "n", None),
-            ("B", line.get("file_path"), "inlineStr", None),
-            ("C", line.get("invoice_no"), "inlineStr", None),
-            ("D", date_serial, "n", None),
-            ("E", None, "n", f"YEAR(D{row_num})"),
-            ("F", None, "str", f'TEXT(D{row_num},"mmm")'),
-            ("G", line.get("supplier"), "inlineStr", None),
-            ("H", line.get("supplier_gstin"), "inlineStr", None),
-            ("I", line.get("item_code"), "inlineStr", None),
-            ("J", line.get("description"), "inlineStr", None),
-            ("K", line.get("hsn"), "inlineStr", None),
-            ("L", line.get("boxes"), "n", None),
-            ("M", line.get("quantity", 1), "n", None),
-            ("N", line.get("unit", "NOS"), "inlineStr", None),
-            ("O", line.get("rate", 0), "n", None),
-            ("P", line.get("discount", 0), "n", None),
-            ("Q", None, "n", f"M{row_num}*O{row_num}-P{row_num}"),
-            ("R", line.get("gst_rate", 0.18), "n", None),
-            ("S", line.get("tax_type", "IGST"), "inlineStr", None),
-            ("T", None, "n", f'IF(S{row_num}="IGST",ROUND(Q{row_num}*R{row_num},2),0)'),
-            ("U", None, "n", f'IF(S{row_num}="CGST+SGST",ROUND(Q{row_num}*R{row_num}/2,2),0)'),
-            ("V", None, "n", f"U{row_num}"),
-            ("W", line.get("round_off", 0), "n", None),
-            ("X", None, "n", f"Q{row_num}+T{row_num}+U{row_num}+V{row_num}+W{row_num}"),
-            ("Y", None, "n", f"ROUND(Q{row_num}*AT{row_num},0)"),
-            ("Z", None, "n", f"X{row_num}-Y{row_num}"),
-            ("AA", line.get("location_code"), "inlineStr", None),
-            ("AB", line.get("vendor_gl_code"), "inlineStr", None),
-            ("AC", line.get("exps_gl_code"), "inlineStr", None),
-            ("AD", line.get("supplier_state"), "inlineStr", None),
-            ("AE", line.get("buyer_gstin"), "inlineStr", None),
-            ("AF", line.get("place_of_supply"), "inlineStr", None),
-            ("AG", line.get("buyer_po_no"), "inlineStr", None),
-            ("AH", line.get("po_date"), "inlineStr", None),
-            ("AI", line.get("delivery_note"), "inlineStr", None),
-            ("AJ", line.get("reference_no"), "inlineStr", None),
-            ("AK", line.get("irn"), "inlineStr", None),
-            ("AL", line.get("ack_no"), "inlineStr", None),
-            ("AM", line.get("ack_date"), "inlineStr", None),
-            ("AN", line.get("eway_bill_no"), "inlineStr", None),
-            ("AO", line.get("transporter"), "inlineStr", None),
-            ("AP", line.get("lr_no"), "inlineStr", None),
-            ("AQ", line.get("vehicle_no"), "inlineStr", None),
-            ("AR", line.get("rcm_note"), "inlineStr", None),
-            ("AS", line.get("tds_section"), "inlineStr", None),
-            ("AT", line.get("tds_rate", 0.001), "n", None),
+            ("A", line.get("sno"), "n", None, None),
+            ("B", line.get("file_path"), "inlineStr", None, None),
+            ("C", line.get("invoice_no"), "inlineStr", None, None),
+            ("D", date_serial, "n", None, None),
+            ("E", None, "n", f"YEAR(D{row_num})", str(year_val)),
+            ("F", None, "str", f'TEXT(D{row_num},"mmm")', month_val),
+            ("G", line.get("supplier"), "inlineStr", None, None),
+            ("H", line.get("supplier_gstin"), "inlineStr", None, None),
+            ("I", line.get("item_code"), "inlineStr", None, None),
+            ("J", line.get("description"), "inlineStr", None, None),
+            ("K", line.get("hsn"), "inlineStr", None, None),
+            ("L", line.get("boxes"), "n", None, None),
+            ("M", qty, "n", None, None),
+            ("N", line.get("unit", "NOS"), "inlineStr", None, None),
+            ("O", rate, "n", None, None),
+            ("P", disc, "n", None, None),
+            ("Q", None, "n", f"M{row_num}*O{row_num}-P{row_num}", str(taxable_amt)),
+            ("R", gst_r, "n", None, None),
+            ("S", line.get("tax_type", "IGST"), "inlineStr", None, None),
+            ("T", None, "n", f'IF(S{row_num}="IGST",ROUND(Q{row_num}*R{row_num},2),0)', str(igst_amt)),
+            ("U", None, "n", f'IF(S{row_num}="CGST+SGST",ROUND(Q{row_num}*R{row_num}/2,2),0)', str(cgst_amt)),
+            ("V", None, "n", f"U{row_num}", str(sgst_amt)),
+            ("W", round_off, "n", None, None),
+            ("X", None, "n", f"Q{row_num}+T{row_num}+U{row_num}+V{row_num}+W{row_num}", str(inv_tot)),
+            ("Y", None, "n", f"ROUND(Q{row_num}*AT{row_num},0)", str(tds_amt)),
+            ("Z", None, "n", f"X{row_num}-Y{row_num}", str(net_pay)),
+            ("AA", line.get("location_code"), "inlineStr", None, None),
+            ("AB", line.get("vendor_gl_code"), "inlineStr", None, None),
+            ("AC", line.get("exps_gl_code"), "inlineStr", None, None),
+            ("AD", line.get("supplier_state"), "inlineStr", None, None),
+            ("AE", line.get("buyer_gstin"), "inlineStr", None, None),
+            ("AF", line.get("place_of_supply"), "inlineStr", None, None),
+            ("AG", line.get("buyer_po_no"), "inlineStr", None, None),
+            ("AH", line.get("po_date"), "inlineStr", None, None),
+            ("AI", line.get("delivery_note"), "inlineStr", None, None),
+            ("AJ", line.get("reference_no"), "inlineStr", None, None),
+            ("AK", line.get("irn"), "inlineStr", None, None),
+            ("AL", line.get("ack_no"), "inlineStr", None, None),
+            ("AM", line.get("ack_date"), "inlineStr", None, None),
+            ("AN", line.get("eway_bill_no"), "inlineStr", None, None),
+            ("AO", line.get("transporter"), "inlineStr", None, None),
+            ("AP", line.get("lr_no"), "inlineStr", None, None),
+            ("AQ", line.get("vehicle_no"), "inlineStr", None, None),
+            ("AR", line.get("rcm_note"), "inlineStr", None, None),
+            ("AS", line.get("tds_section"), "inlineStr", None, None),
+            ("AT", tds_r, "n", None, None),
         ]
 
-        for col_ltr, val, val_type, formula in col_defs:
+        for col_ltr, val, val_type, formula, eval_val in col_defs:
             c_elem = ET.SubElement(row_elem, f'{{{ns_uri}}}c', {
                 'r': f"{col_ltr}{row_num}",
                 's': styles.get(col_ltr, '47'),
@@ -497,6 +596,9 @@ class ExcelManager:
                 f_elem = ET.SubElement(c_elem, f'{{{ns_uri}}}f', {'aca': 'false'})
                 f_elem.text = formula
                 c_elem.attrib['t'] = val_type
+                if eval_val is not None:
+                    v_elem = ET.SubElement(c_elem, f'{{{ns_uri}}}v')
+                    v_elem.text = str(eval_val)
             elif val is not None and str(val).strip() != '':
                 if val_type == 'inlineStr':
                     c_elem.attrib['t'] = 'inlineStr'
@@ -549,5 +651,10 @@ class ExcelManager:
                     str(DASHBOARD_HTML_PATH),
                 ]
                 subprocess.run(cmd, check=True, capture_output=True)
+                # Mirror to FALLBACK_DIR if different
+                from config import FALLBACK_DIR
+                if FALLBACK_DIR.exists() and FALLBACK_DIR != EXPENSES_DIR:
+                    fb_dash = FALLBACK_DIR / "Expense_Dashboard.html"
+                    shutil.copy2(DASHBOARD_HTML_PATH, fb_dash)
             except Exception as e:
                 print(f"Dashboard build warning: {e}")

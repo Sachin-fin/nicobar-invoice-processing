@@ -14,39 +14,57 @@ class InvoiceScanner:
         """Fast scan Expenses folder (depth <= 2) and return list of unrecorded PDFs."""
         state = self.excel_mgr.get_register_state()
         reg_files = set(state.get("registered_files", []))
+        reg_basenames = {Path(f).name.lower() for f in reg_files if f}
 
         unprocessed = []
-        skip_folders = {'_tools', '_docs', '_backup', '_web_uploads', '.venv', '__pycache__'}
-        
+        skip_folders = {'_tools', '_docs', '_backup', '_web_uploads', '.venv', '__pycache__', '_temp_gmail', '_temp_test', 'node_modules'}
+
+        def is_unrecorded(p):
+            fn = p.name.lower()
+            if fn in IGNORED_FILES or fn.startswith(('attachment_', 'whatsapp image', '.')):
+                return False
+            rel_p = p.relative_to(EXPENSES_DIR)
+            norm_path = str(rel_p).strip().lower().replace('/', '\\')
+            if norm_path in reg_files or fn in reg_basenames:
+                return False
+            return True
+
+        candidate_files = []
         try:
             for entry in os.scandir(EXPENSES_DIR):
-                if entry.is_dir() and entry.name not in skip_folders and not entry.name.startswith('.'):
+                if entry.name.startswith(('_', '.')) or entry.name in skip_folders:
+                    continue
+                if entry.is_dir():
                     try:
                         for sub in os.scandir(entry.path):
-                            if sub.is_file() and sub.name.lower().endswith('.pdf') and sub.name.lower() not in IGNORED_FILES:
+                            if sub.is_file() and sub.name.lower().endswith('.pdf'):
                                 full_p = Path(sub.path)
-                                rel_p = full_p.relative_to(EXPENSES_DIR)
-                                norm_path = str(rel_p).strip().lower().replace('/', '\\')
-                                if norm_path not in reg_files:
-                                    unprocessed.append(full_p)
-                            elif sub.is_dir() and not sub.name.startswith('.'):
+                                if is_unrecorded(full_p):
+                                    candidate_files.append(full_p)
+                            elif sub.is_dir() and not sub.name.startswith(('_', '.')):
                                 for sub2 in os.scandir(sub.path):
-                                    if sub2.is_file() and sub2.name.lower().endswith('.pdf') and sub2.name.lower() not in IGNORED_FILES:
+                                    if sub2.is_file() and sub2.name.lower().endswith('.pdf'):
                                         full_p = Path(sub2.path)
-                                        rel_p = full_p.relative_to(EXPENSES_DIR)
-                                        norm_path = str(rel_p).strip().lower().replace('/', '\\')
-                                        if norm_path not in reg_files:
-                                            unprocessed.append(full_p)
+                                        if is_unrecorded(full_p):
+                                            candidate_files.append(full_p)
                     except PermissionError:
                         pass
-                elif entry.is_file() and entry.name.lower().endswith('.pdf') and entry.name.lower() not in IGNORED_FILES:
+                elif entry.is_file() and entry.name.lower().endswith('.pdf'):
                     full_p = Path(entry.path)
-                    rel_p = full_p.relative_to(EXPENSES_DIR)
-                    norm_path = str(rel_p).strip().lower().replace('/', '\\')
-                    if norm_path not in reg_files:
-                        unprocessed.append(full_p)
+                    if is_unrecorded(full_p):
+                        candidate_files.append(full_p)
         except Exception as e:
             print(f"Scan error: {e}")
+
+        # Filter candidates through check_duplicate so renamed or re-filed duplicates are excluded
+        for p in candidate_files:
+            try:
+                inv_data = self.extractor.extract_from_pdf(p)
+                is_dup, _, _ = self.excel_mgr.check_duplicate(inv_data, state)
+                if not is_dup:
+                    unprocessed.append(full_p if False else p)
+            except Exception:
+                unprocessed.append(p)
 
         return unprocessed, state
 

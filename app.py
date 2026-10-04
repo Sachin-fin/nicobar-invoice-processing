@@ -192,8 +192,10 @@ def open_file():
         }
         target_path = path_map.get(target)
         if target_path and target_path.exists():
-            os.startfile(str(target_path))
-            return jsonify({"status": "success", "message": f"Opened {target_path.name}"})
+            if hasattr(os, "startfile"):
+                os.startfile(str(target_path))
+                return jsonify({"status": "success", "message": f"Opened {target_path.name}"})
+            return jsonify({"status": "error", "message": "Desktop file opening only supported on host machine"}), 400
         return jsonify({"status": "error", "message": "Target file not found"}), 404
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
