@@ -3,14 +3,8 @@ from pathlib import Path
 
 # Base Paths
 BASE_DIR = Path(__file__).resolve().parent
-LOCAL_DIR = Path(r"D:\Google _invoice Processing")
+EXPENSES_DIR = Path(os.getenv("EXPENSES_DIR", r"D:\Google _invoice Processing"))
 FALLBACK_DIR = Path(r"D:\Claude_Sales\Expenses")
-
-# Use D:\Google _invoice Processing if the register or invoices exist there, else fallback
-if (LOCAL_DIR / "1. Expense_Invoice_Register.xlsx").exists() or (LOCAL_DIR / "3.Vendor_GL_Codes.xlsx").exists():
-    EXPENSES_DIR = LOCAL_DIR
-else:
-    EXPENSES_DIR = FALLBACK_DIR
 
 REGISTER_PATH = EXPENSES_DIR / "1. Expense_Invoice_Register.xlsx"
 VENDOR_CODES_PATH = EXPENSES_DIR / "3.Vendor_GL_Codes.xlsx"
